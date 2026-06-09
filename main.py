@@ -11,7 +11,7 @@ from app.core.exceptions import (
     validation_exception_handler,
     general_exception_handler
 )
-from app.api import auth, processes, masters, courses, schedules, bookings, certificates, statistics, members
+from app.api import auth, processes, masters, courses, schedules, bookings, certificates, statistics, members, materials
 
 migrate_database()
 
@@ -47,6 +47,7 @@ app.include_router(bookings.router)
 app.include_router(certificates.router)
 app.include_router(statistics.router)
 app.include_router(members.router)
+app.include_router(materials.router)
 
 
 @app.get("/")
