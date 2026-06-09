@@ -268,3 +268,99 @@ class MonthlyRevenue(BaseModel):
     month: int
     total_revenue: float
     booking_count: int
+
+
+class MaterialBase(BaseModel):
+    name: str
+    unit: str
+    current_stock: float = 0.0
+    safety_threshold: float = 0.0
+
+
+class MaterialCreate(MaterialBase):
+    pass
+
+
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    unit: Optional[str] = None
+    current_stock: Optional[float] = None
+    safety_threshold: Optional[float] = None
+
+
+class Material(MaterialBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialAlert(BaseModel):
+    id: int
+    name: str
+    unit: str
+    current_stock: float
+    safety_threshold: float
+    shortage: float
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMBase(BaseModel):
+    process_id: int
+    material_id: int
+    quantity_per_use: float
+
+
+class ProcessBOMCreate(ProcessBOMBase):
+    pass
+
+
+class ProcessBOMSimple(BaseModel):
+    id: int
+    process_id: int
+    material_id: int
+    quantity_per_use: float
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMDetail(BaseModel):
+    id: int
+    process_id: int
+    process_name: Optional[str] = None
+    material_id: int
+    material_name: Optional[str] = None
+    unit: Optional[str] = None
+    quantity_per_use: float
+
+    class Config:
+        from_attributes = True
+
+
+class StockBatchItemDetail(BaseModel):
+    id: int
+    process_id: int
+    process_name: Optional[str] = None
+    material_id: int
+    material_name: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: float
+
+    class Config:
+        from_attributes = True
+
+
+class StockBatchDetail(BaseModel):
+    id: int
+    batch_number: str
+    booking_id: int
+    operation_type: str
+    created_at: datetime
+    items: List[StockBatchItemDetail] = []
+
+    class Config:
+        from_attributes = True

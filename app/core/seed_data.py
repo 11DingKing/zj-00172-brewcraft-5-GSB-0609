@@ -1,6 +1,10 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty
+from app.models.models import (
+    User, Process, Master, Course, Schedule, Booking, Certificate,
+    course_process_association, UserRole, CourseType, ScheduleType,
+    MemberLevel, CourseDifficulty, Material, ProcessBOM
+)
 from app.core.security import get_password_hash
 
 
@@ -176,6 +180,33 @@ def seed_database(db: Session):
     
     for p in processes:
         db.add(p)
+    db.commit()
+    
+    materials = [
+        Material(name="麦芽", unit="kg", current_stock=200.0, safety_threshold=50.0),
+        Material(name="啤酒花", unit="g", current_stock=3000.0, safety_threshold=500.0),
+        Material(name="酵母", unit="g", current_stock=80.0, safety_threshold=100.0),
+        Material(name="糯米", unit="kg", current_stock=300.0, safety_threshold=80.0),
+        Material(name="麸皮", unit="kg", current_stock=150.0, safety_threshold=40.0),
+        Material(name="醋曲母", unit="g", current_stock=500.0, safety_threshold=200.0),
+    ]
+    for m in materials:
+        db.add(m)
+    db.commit()
+    
+    bom_seed = [
+        (processes[0], materials[3], 2.0),
+        (processes[0], materials[0], 1.5),
+        (processes[1], materials[4], 1.0),
+        (processes[1], materials[5], 30.0),
+        (processes[2], materials[2], 5.0),
+        (processes[2], materials[1], 50.0),
+        (processes[3], materials[2], 3.0),
+        (processes[4], materials[0], 0.5),
+        (processes[5], materials[1], 20.0),
+    ]
+    for proc, mat, qty in bom_seed:
+        db.add(ProcessBOM(process_id=proc.id, material_id=mat.id, quantity_per_use=qty))
     db.commit()
     
     masters = [

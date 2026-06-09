@@ -184,3 +184,61 @@ class ExperienceRecord(Base):
     user = relationship("User", back_populates="experience_records")
     course = relationship("Course")
     booking = relationship("Booking")
+
+
+class StockOperationType(str, enum.Enum):
+    DEDUCT = "deduct"
+    ROLLBACK = "rollback"
+
+
+class Material(Base):
+    __tablename__ = "materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    unit = Column(String, nullable=False)
+    current_stock = Column(Float, nullable=False, default=0.0)
+    safety_threshold = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    boms = relationship("ProcessBOM", back_populates="material")
+
+
+class ProcessBOM(Base):
+    __tablename__ = "process_boms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity_per_use = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    process = relationship("Process")
+    material = relationship("Material", back_populates="boms")
+
+
+class StockBatch(Base):
+    __tablename__ = "stock_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_number = Column(String, unique=True, nullable=False, index=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False)
+    operation_type = Column(Enum(StockOperationType), nullable=False, default=StockOperationType.DEDUCT)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    booking = relationship("Booking")
+    items = relationship("StockBatchItem", back_populates="batch", cascade="all, delete-orphan")
+
+
+class StockBatchItem(Base):
+    __tablename__ = "stock_batch_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("stock_batches.id"), nullable=False)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+
+    batch = relationship("StockBatch", back_populates="items")
+    process = relationship("Process")
+    material = relationship("Material")
