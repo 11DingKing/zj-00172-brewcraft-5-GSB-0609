@@ -1,11 +1,111 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty
+from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty, Material, ProcessBOM
 from app.core.security import get_password_hash
+
+
+def seed_materials_and_boms(db: Session, processes: list):
+    if db.query(Material).count() > 0:
+        return
+    
+    materials = [
+        Material(
+            name="优质糯米",
+            code="MAT001",
+            unit="kg",
+            stock_quantity=500.0,
+            safety_threshold=100.0,
+            description="精选东北圆糯米，颗粒饱满"
+        ),
+        Material(
+            name="麸皮",
+            code="MAT002",
+            unit="kg",
+            stock_quantity=200.0,
+            safety_threshold=50.0,
+            description="新鲜小麦麸皮"
+        ),
+        Material(
+            name="大麦",
+            code="MAT003",
+            unit="kg",
+            stock_quantity=150.0,
+            safety_threshold=30.0,
+            description="优质带壳大麦"
+        ),
+        Material(
+            name="豌豆",
+            code="MAT004",
+            unit="kg",
+            stock_quantity=100.0,
+            safety_threshold=20.0,
+            description="白豌豆，制曲原料"
+        ),
+        Material(
+            name="传统醋曲",
+            code="MAT005",
+            unit="kg",
+            stock_quantity=80.0,
+            safety_threshold=20.0,
+            description="自制优质醋曲，传承百年工艺"
+        ),
+        Material(
+            name="纯净水",
+            code="MAT006",
+            unit="L",
+            stock_quantity=1000.0,
+            safety_threshold=200.0,
+            description="反渗透净化水"
+        ),
+        Material(
+            name="食用盐",
+            code="MAT007",
+            unit="kg",
+            stock_quantity=60.0,
+            safety_threshold=15.0,
+            description="精制食用盐"
+        ),
+        Material(
+            name="炒米色",
+            code="MAT008",
+            unit="kg",
+            stock_quantity=40.0,
+            safety_threshold=10.0,
+            description="手工炒制焦糖色"
+        )
+    ]
+    for mat in materials:
+        db.add(mat)
+    db.commit()
+    
+    process_map = {p.code: p for p in processes}
+    material_map = {m.code: m for m in materials}
+    
+    boms = [
+        (process_map["P001"], material_map["MAT001"], 2.0),
+        (process_map["P001"], material_map["MAT006"], 3.0),
+        (process_map["P002"], material_map["MAT002"], 1.5),
+        (process_map["P002"], material_map["MAT003"], 1.0),
+        (process_map["P002"], material_map["MAT004"], 0.5),
+        (process_map["P002"], material_map["MAT005"], 0.3),
+        (process_map["P002"], material_map["MAT006"], 1.0),
+        (process_map["P003"], material_map["MAT005"], 0.2),
+        (process_map["P003"], material_map["MAT006"], 2.0),
+        (process_map["P004"], material_map["MAT007"], 0.1),
+        (process_map["P005"], material_map["MAT006"], 5.0),
+        (process_map["P005"], material_map["MAT008"], 0.2),
+        (process_map["P006"], material_map["MAT007"], 0.05),
+    ]
+    for process, material, qty in boms:
+        db.add(ProcessBOM(process_id=process.id, material_id=material.id, quantity_per_batch=qty))
+    db.commit()
 
 
 def seed_database(db: Session):
     if db.query(User).count() > 0:
+        if db.query(Process).count() > 0:
+            processes = db.query(Process).all()
+            seed_materials_and_boms(db, processes)
         return
     
     admin_user = User(
@@ -178,6 +278,8 @@ def seed_database(db: Session):
         db.add(p)
     db.commit()
     
+    seed_materials_and_boms(db, processes)
+    
     masters = [
         Master(
             user_id=master_user1.id,
@@ -305,7 +407,7 @@ def seed_database(db: Session):
         {
             "course_id": courses[0].id,
             "customer_name": "张三",
-            "customer_phone": "13800138001",
+            "customer_phone": "138******01",
             "participant_count": 2,
             "participant_names": "张三、李四",
             "days_ago": 30,
@@ -316,7 +418,7 @@ def seed_database(db: Session):
         {
             "course_id": courses[1].id,
             "customer_name": "王五",
-            "customer_phone": "13800138002",
+            "customer_phone": "138******02",
             "participant_count": 4,
             "participant_names": "王五一家",
             "days_ago": 20,
@@ -327,7 +429,7 @@ def seed_database(db: Session):
         {
             "course_id": courses[2].id,
             "customer_name": "赵六",
-            "customer_phone": "13800138003",
+            "customer_phone": "138******03",
             "participant_count": 2,
             "participant_names": "赵六、钱七",
             "days_ago": 10,
@@ -338,7 +440,7 @@ def seed_database(db: Session):
         {
             "course_id": courses[0].id,
             "customer_name": "孙八",
-            "customer_phone": "13800138004",
+            "customer_phone": "138******04",
             "participant_count": 3,
             "participant_names": "孙八全家",
             "days_ago": 5,
