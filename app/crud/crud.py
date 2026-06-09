@@ -1,9 +1,10 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from datetime import datetime, timedelta
-from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, CourseType, ScheduleType, UserRole, MemberLevel, CourseDifficulty, ExperienceRecord
-from app.schemas.schemas import UserCreate, ProcessCreate, MasterCreate, CourseCreate, ScheduleCreate, BookingCreate, CertificateCreate, BookingReview
+import uuid
+from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, CourseType, ScheduleType, UserRole, MemberLevel, CourseDifficulty, ExperienceRecord, Material, ProcessBOM, MaterialBatch
+from app.schemas.schemas import UserCreate, ProcessCreate, MasterCreate, CourseCreate, ScheduleCreate, BookingCreate, CertificateCreate, BookingReview, MaterialCreate, MaterialUpdate, ProcessBOMCreate
 from app.core.security import get_password_hash, verify_password
 
 
@@ -161,47 +162,87 @@ def get_bookings(db: Session, skip: int = 0, limit: int = 100, status: Optional[
 
 
 def create_booking(db: Session, booking: BookingCreate):
-    course = get_course(db, booking.course_id)
-    if not course:
-        raise ValueError("Course not found")
-    
-    if booking.user_id:
-        if not check_booking_permission(db, booking.user_id, booking.course_id):
-            raise ValueError(f"Insufficient member level. Required: {course.required_level}")
-    
-    if course.course_type == CourseType.HANDS_ON:
-        if course.max_participants and booking.participant_count > course.max_participants:
-            raise ValueError(f"Maximum {course.max_participants} participants allowed")
-    
-    end_time = booking.start_time + timedelta(minutes=course.duration_minutes)
-    
-    if check_schedule_conflict(db, booking.workshop_code, booking.start_time, end_time):
-        raise ValueError("Schedule conflict: workshop is occupied")
-    
-    total_price = course.price * booking.participant_count
-    
-    booking_data = booking.dict(exclude={"workshop_code", "start_time"})
-    booking_data["total_price"] = total_price
-    db_booking = Booking(**booking_data)
-    db.add(db_booking)
-    db.commit()
-    db.refresh(db_booking)
-    
-    db_schedule = Schedule(
-        workshop_code=booking.workshop_code,
-        schedule_type=ScheduleType.EXPERIENCE,
-        start_time=booking.start_time,
-        end_time=end_time,
-        description=f"Experience: {course.name}",
-        booking_id=db_booking.id
-    )
-    db.add(db_schedule)
-    db.commit()
-    
-    if booking.user_id:
-        add_experience_for_booking(db, db_booking.id)
-    
-    return db_booking
+    try:
+        course = get_course(db, booking.course_id)
+        if not course:
+            raise ValueError("Course not found")
+        
+        if booking.user_id:
+            if not check_booking_permission(db, booking.user_id, booking.course_id):
+                raise ValueError(f"Insufficient member level. Required: {course.required_level}")
+        
+        if course.course_type == CourseType.HANDS_ON:
+            if course.max_participants and booking.participant_count > course.max_participants:
+                raise ValueError(f"Maximum {course.max_participants} participants allowed")
+        
+        end_time = booking.start_time + timedelta(minutes=course.duration_minutes)
+        
+        if check_schedule_conflict(db, booking.workshop_code, booking.start_time, end_time):
+            raise ValueError("Schedule conflict: workshop is occupied")
+        
+        material_requirements = calculate_course_material_requirement(db, booking.course_id, booking.participant_count)
+        
+        for material_id, required_quantity in material_requirements.items():
+            material = get_material(db, material_id)
+            if not material:
+                raise ValueError(f"原料不存在: ID {material_id}")
+            if material.current_stock < required_quantity:
+                shortage = required_quantity - material.current_stock
+                raise ValueError(f"原料[{material.name}]库存不足，需要 {required_quantity} {material.unit}，当前库存 {material.current_stock} {material.unit}，还差 {shortage} {material.unit}")
+        
+        total_price = course.price * booking.participant_count
+        
+        booking_data = booking.dict(exclude={"workshop_code", "start_time"})
+        booking_data["total_price"] = total_price
+        db_booking = Booking(**booking_data)
+        db.add(db_booking)
+        db.flush()
+        
+        db_schedule = Schedule(
+            workshop_code=booking.workshop_code,
+            schedule_type=ScheduleType.EXPERIENCE,
+            start_time=booking.start_time,
+            end_time=end_time,
+            description=f"Experience: {course.name}",
+            booking_id=db_booking.id
+        )
+        db.add(db_schedule)
+        db.flush()
+        
+        if material_requirements:
+            batch_number = generate_batch_number()
+            for process in course.processes:
+                boms = get_process_boms_by_process(db, process.id)
+                for bom in boms:
+                    deduct_quantity = bom.quantity * booking.participant_count
+                    material = get_material(db, bom.material_id)
+                    
+                    if material.current_stock < deduct_quantity:
+                        raise ValueError(f"原料[{material.name}]库存不足")
+                    
+                    material.current_stock -= deduct_quantity
+                    
+                    batch = MaterialBatch(
+                        batch_number=batch_number,
+                        booking_id=db_booking.id,
+                        process_id=process.id,
+                        material_id=bom.material_id,
+                        quantity=deduct_quantity,
+                        operation_type="deduct",
+                        remark=f"预约扣减 - {course.name}"
+                    )
+                    db.add(batch)
+        
+        if booking.user_id:
+            add_experience_for_booking(db, db_booking.id)
+        
+        db.commit()
+        db.refresh(db_booking)
+        return db_booking
+        
+    except Exception as e:
+        db.rollback()
+        raise e
 
 
 def add_booking_review(db: Session, booking_id: int, review: BookingReview):
@@ -496,3 +537,268 @@ def check_booking_permission(db: Session, user_id: int, course_id: int) -> bool:
     required_level_value = list(LEVEL_THRESHOLDS.keys()).index(course.required_level)
     
     return user_level_value >= required_level_value
+
+
+def get_material(db: Session, material_id: int):
+    return db.query(Material).filter(Material.id == material_id).first()
+
+
+def get_material_by_name(db: Session, name: str):
+    return db.query(Material).filter(Material.name == name).first()
+
+
+def get_materials(db: Session, skip: int = 0, limit: int = 100) -> Tuple[List[Material], int]:
+    query = db.query(Material)
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_material(db: Session, material: MaterialCreate):
+    db_material = Material(**material.dict())
+    db.add(db_material)
+    db.commit()
+    db.refresh(db_material)
+    return db_material
+
+
+def update_material(db: Session, material_id: int, material: MaterialUpdate):
+    db_material = get_material(db, material_id)
+    if not db_material:
+        return None
+    
+    update_data = material.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_material, key, value)
+    
+    db.commit()
+    db.refresh(db_material)
+    return db_material
+
+
+def delete_material(db: Session, material_id: int):
+    db_material = get_material(db, material_id)
+    if db_material:
+        db.delete(db_material)
+        db.commit()
+    return db_material
+
+
+def get_low_stock_materials(db: Session) -> List[Dict]:
+    materials = db.query(Material).filter(Material.current_stock < Material.safety_stock).all()
+    return [
+        {
+            "material_id": m.id,
+            "material_name": m.name,
+            "current_stock": m.current_stock,
+            "safety_stock": m.safety_stock,
+            "unit": m.unit,
+            "shortage": m.safety_stock - m.current_stock
+        }
+        for m in materials
+    ]
+
+
+def get_process_bom(db: Session, bom_id: int):
+    return db.query(ProcessBOM).filter(ProcessBOM.id == bom_id).first()
+
+
+def get_process_boms_by_process(db: Session, process_id: int) -> List[ProcessBOM]:
+    return db.query(ProcessBOM).filter(ProcessBOM.process_id == process_id).all()
+
+
+def get_process_boms_by_course(db: Session, course_id: int) -> List[Dict]:
+    course = get_course(db, course_id)
+    if not course:
+        return []
+    
+    results = []
+    for process in course.processes:
+        boms = get_process_boms_by_process(db, process.id)
+        for bom in boms:
+            results.append({
+                "id": bom.id,
+                "process_id": process.id,
+                "process_name": process.name,
+                "material_id": bom.material_id,
+                "material_name": bom.material.name,
+                "material_unit": bom.material.unit,
+                "quantity": bom.quantity,
+                "created_at": bom.created_at
+            })
+    return results
+
+
+def create_process_bom(db: Session, bom: ProcessBOMCreate):
+    db_bom = ProcessBOM(**bom.dict())
+    db.add(db_bom)
+    db.commit()
+    db.refresh(db_bom)
+    return db_bom
+
+
+def delete_process_bom(db: Session, bom_id: int):
+    db_bom = get_process_bom(db, bom_id)
+    if db_bom:
+        db.delete(db_bom)
+        db.commit()
+    return db_bom
+
+
+def calculate_course_material_requirement(db: Session, course_id: int, participant_count: int = 1) -> Dict[int, float]:
+    course = get_course(db, course_id)
+    if not course:
+        return {}
+    
+    material_requirements = {}
+    
+    for process in course.processes:
+        boms = get_process_boms_by_process(db, process.id)
+        for bom in boms:
+            if bom.material_id not in material_requirements:
+                material_requirements[bom.material_id] = 0.0
+            material_requirements[bom.material_id] += bom.quantity * participant_count
+    
+    return material_requirements
+
+
+def generate_batch_number() -> str:
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    unique_id = str(uuid.uuid4().hex)[:8].upper()
+    return f"BATCH-{timestamp}-{unique_id}"
+
+
+def deduct_stock_for_booking(db: Session, booking_id: int, course_id: int, participant_count: int) -> Tuple[bool, str, Optional[List[MaterialBatch]]]:
+    material_requirements = calculate_course_material_requirement(db, course_id, participant_count)
+    
+    if not material_requirements:
+        return True, "", []
+    
+    course = get_course(db, course_id)
+    
+    for material_id, required_quantity in material_requirements.items():
+        material = get_material(db, material_id)
+        if not material:
+            return False, f"原料不存在: ID {material_id}", None
+        if material.current_stock < required_quantity:
+            shortage = required_quantity - material.current_stock
+            return False, f"原料[{material.name}]库存不足，需要 {required_quantity} {material.unit}，当前库存 {material.current_stock} {material.unit}，还差 {shortage} {material.unit}", None
+    
+    batch_number = generate_batch_number()
+    batches = []
+    
+    for process in course.processes:
+        boms = get_process_boms_by_process(db, process.id)
+        for bom in boms:
+            deduct_quantity = bom.quantity * participant_count
+            material = get_material(db, bom.material_id)
+            
+            material.current_stock -= deduct_quantity
+            
+            batch = MaterialBatch(
+                batch_number=batch_number,
+                booking_id=booking_id,
+                process_id=process.id,
+                material_id=bom.material_id,
+                quantity=deduct_quantity,
+                operation_type="deduct",
+                remark=f"预约扣减 - {course.name}"
+            )
+            db.add(batch)
+            batches.append(batch)
+    
+    db.commit()
+    return True, batch_number, batches
+
+
+def rollback_stock_for_booking(db: Session, booking_id: int) -> bool:
+    batches = db.query(MaterialBatch).filter(
+        MaterialBatch.booking_id == booking_id,
+        MaterialBatch.operation_type == "deduct"
+    ).all()
+    
+    if not batches:
+        return False
+    
+    batch_number = batches[0].batch_number
+    
+    for batch in batches:
+        material = get_material(db, batch.material_id)
+        if material:
+            material.current_stock += batch.quantity
+        
+        rollback_batch = MaterialBatch(
+            batch_number=batch_number,
+            booking_id=booking_id,
+            process_id=batch.process_id,
+            material_id=batch.material_id,
+            quantity=batch.quantity,
+            operation_type="rollback",
+            remark=f"预约取消回滚"
+        )
+        db.add(rollback_batch)
+    
+    db.commit()
+    return True
+
+
+def get_material_batch(db: Session, batch_id: int):
+    return db.query(MaterialBatch).filter(MaterialBatch.id == batch_id).first()
+
+
+def get_material_batch_by_number(db: Session, batch_number: str) -> List[Dict]:
+    batches = db.query(MaterialBatch).filter(MaterialBatch.batch_number == batch_number).all()
+    return [
+        {
+            "id": b.id,
+            "batch_number": b.batch_number,
+            "booking_id": b.booking_id,
+            "process_id": b.process_id,
+            "process_name": b.process.name if b.process else None,
+            "material_id": b.material_id,
+            "material_name": b.material.name,
+            "material_unit": b.material.unit,
+            "quantity": b.quantity,
+            "operation_type": b.operation_type,
+            "remark": b.remark,
+            "created_at": b.created_at
+        }
+        for b in batches
+    ]
+
+
+def get_material_batches(db: Session, material_id: Optional[int] = None, booking_id: Optional[int] = None, 
+                         skip: int = 0, limit: int = 100) -> Tuple[List[MaterialBatch], int]:
+    query = db.query(MaterialBatch)
+    
+    if material_id:
+        query = query.filter(MaterialBatch.material_id == material_id)
+    if booking_id:
+        query = query.filter(MaterialBatch.booking_id == booking_id)
+    
+    total = query.count()
+    items = query.order_by(MaterialBatch.created_at.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def cancel_booking(db: Session, booking_id: int) -> Booking:
+    try:
+        db_booking = get_booking(db, booking_id)
+        if not db_booking:
+            raise ValueError("Booking not found")
+        
+        if db_booking.status == "cancelled":
+            raise ValueError("Booking already cancelled")
+        
+        original_status = db_booking.status
+        db_booking.status = "cancelled"
+        
+        if original_status in ["confirmed", "completed"]:
+            rollback_stock_for_booking(db, booking_id)
+        
+        db.commit()
+        db.refresh(db_booking)
+        return db_booking
+    except Exception as e:
+        db.rollback()
+        raise e

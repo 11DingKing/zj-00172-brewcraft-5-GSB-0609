@@ -268,3 +268,118 @@ class MonthlyRevenue(BaseModel):
     month: int
     total_revenue: float
     booking_count: int
+
+
+class MaterialBase(BaseModel):
+    name: str
+    unit: str
+    current_stock: float = 0.0
+    safety_stock: float = 0.0
+    description: Optional[str] = None
+
+
+class MaterialCreate(MaterialBase):
+    pass
+
+
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    unit: Optional[str] = None
+    current_stock: Optional[float] = None
+    safety_stock: Optional[float] = None
+    description: Optional[str] = None
+
+
+class Material(MaterialBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMBase(BaseModel):
+    process_id: int
+    material_id: int
+    quantity: float
+
+
+class ProcessBOMCreate(ProcessBOMBase):
+    pass
+
+
+class ProcessBOM(ProcessBOMBase):
+    id: int
+    material: Material
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMWithProcess(BaseModel):
+    id: int
+    process_id: int
+    process_name: str
+    material_id: int
+    material_name: str
+    material_unit: str
+    quantity: float
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialBatchBase(BaseModel):
+    batch_number: str
+    booking_id: Optional[int] = None
+    process_id: Optional[int] = None
+    material_id: int
+    quantity: float
+    operation_type: str
+    remark: Optional[str] = None
+
+
+class MaterialBatchCreate(MaterialBatchBase):
+    pass
+
+
+class MaterialBatch(MaterialBatchBase):
+    id: int
+    material: Material
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialBatchDetail(BaseModel):
+    id: int
+    batch_number: str
+    booking_id: Optional[int] = None
+    process_id: Optional[int] = None
+    process_name: Optional[str] = None
+    material_id: int
+    material_name: str
+    material_unit: str
+    quantity: float
+    operation_type: str
+    remark: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StockAlert(BaseModel):
+    material_id: int
+    material_name: str
+    current_stock: float
+    safety_stock: float
+    unit: str
+    shortage: float
+
+    class Config:
+        from_attributes = True
