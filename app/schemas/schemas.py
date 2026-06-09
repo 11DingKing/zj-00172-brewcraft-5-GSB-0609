@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Generic, TypeVar
 from datetime import datetime
-from app.models.models import UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty
+from app.models.models import UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty, BatchType
 
 T = TypeVar('T')
 
@@ -268,3 +268,80 @@ class MonthlyRevenue(BaseModel):
     month: int
     total_revenue: float
     booking_count: int
+
+
+class MaterialBase(BaseModel):
+    name: str
+    unit: str
+    current_stock: float = 0
+    safety_stock: float = 0
+
+
+class MaterialCreate(MaterialBase):
+    pass
+
+
+class Material(MaterialBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMBase(BaseModel):
+    process_id: int
+    material_id: int
+    quantity_per_session: float
+
+
+class ProcessBOMCreate(ProcessBOMBase):
+    pass
+
+
+class ProcessBOM(ProcessBOMBase):
+    id: int
+    material: Material
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMDetail(ProcessBOMBase):
+    id: int
+    material: Material
+    process: Process
+
+    class Config:
+        from_attributes = True
+
+
+class InventoryBatchBase(BaseModel):
+    batch_no: str
+    booking_id: int
+    process_id: int
+    material_id: int
+    quantity: float
+    batch_type: BatchType
+
+
+class InventoryBatch(InventoryBatchBase):
+    id: int
+    created_at: datetime
+    material: Material
+    process: Process
+
+    class Config:
+        from_attributes = True
+
+
+class MaterialAlert(BaseModel):
+    id: int
+    name: str
+    unit: str
+    current_stock: float
+    safety_stock: float
+    shortage: float
+
+    class Config:
+        from_attributes = True

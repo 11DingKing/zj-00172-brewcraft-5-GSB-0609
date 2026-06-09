@@ -75,6 +75,7 @@ class Process(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     courses = relationship("Course", secondary=course_process_association, back_populates="processes")
+    bom_entries = relationship("ProcessBOM", back_populates="process", cascade="all, delete-orphan")
 
 
 class Master(Base):
@@ -149,6 +150,7 @@ class Booking(Base):
     schedule = relationship("Schedule", back_populates="booking", uselist=False)
     certificate = relationship("Certificate", back_populates="booking", uselist=False)
     experience_records = relationship("ExperienceRecord", back_populates="booking")
+    batch_records = relationship("InventoryBatch", back_populates="booking", cascade="all, delete-orphan")
 
 
 class Certificate(Base):
@@ -165,6 +167,54 @@ class Certificate(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     booking = relationship("Booking", back_populates="certificate")
+
+
+class Material(Base):
+    __tablename__ = "materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    unit = Column(String, nullable=False)
+    current_stock = Column(Float, nullable=False, default=0)
+    safety_stock = Column(Float, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bom_entries = relationship("ProcessBOM", back_populates="material")
+    batch_records = relationship("InventoryBatch", back_populates="material")
+
+
+class ProcessBOM(Base):
+    __tablename__ = "process_bom"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity_per_session = Column(Float, nullable=False)
+
+    process = relationship("Process", back_populates="bom_entries")
+    material = relationship("Material", back_populates="bom_entries")
+
+
+class BatchType(str, enum.Enum):
+    DEDUCT = "deduct"
+    ROLLBACK = "rollback"
+
+
+class InventoryBatch(Base):
+    __tablename__ = "inventory_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_no = Column(String, unique=True, nullable=False, index=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    batch_type = Column(Enum(BatchType), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    booking = relationship("Booking", back_populates="batch_records")
+    process = relationship("Process")
+    material = relationship("Material", back_populates="batch_records")
 
 
 class ExperienceRecord(Base):

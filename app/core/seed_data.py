@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty
+from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty, Material, ProcessBOM
 from app.core.security import get_password_hash
 
 
@@ -397,4 +397,47 @@ def seed_database(db: Session):
             )
             db.add(db_certificate)
     
+    db.commit()
+    
+    if db.query(Material).count() > 0:
+        return
+    
+    materials = [
+        Material(name="糯米", unit="kg", current_stock=500, safety_stock=100),
+        Material(name="麸皮", unit="kg", current_stock=300, safety_stock=80),
+        Material(name="大麦", unit="kg", current_stock=200, safety_stock=50),
+        Material(name="豌豆", unit="kg", current_stock=150, safety_stock=40),
+        Material(name="醋曲", unit="kg", current_stock=80, safety_stock=20),
+        Material(name="水", unit="L", current_stock=5000, safety_stock=1000),
+        Material(name="谷糠", unit="kg", current_stock=400, safety_stock=100),
+        Material(name="食盐", unit="kg", current_stock=50, safety_stock=10),
+    ]
+    for m in materials:
+        db.add(m)
+    db.commit()
+    
+    process_objs = {p.code: p for p in db.query(Process).all()}
+    material_objs = {m.name: m for m in db.query(Material).all()}
+    
+    bom_data = [
+        ("P001", "糯米", 5.0),
+        ("P001", "水", 10.0),
+        ("P002", "麸皮", 3.0),
+        ("P002", "大麦", 2.0),
+        ("P002", "豌豆", 1.5),
+        ("P002", "醋曲", 0.5),
+        ("P003", "醋曲", 2.0),
+        ("P003", "水", 8.0),
+        ("P004", "谷糠", 3.0),
+        ("P005", "水", 15.0),
+        ("P005", "食盐", 0.5),
+        ("P006", "食盐", 0.2),
+    ]
+    for code, mat_name, qty in bom_data:
+        if code in process_objs and mat_name in material_objs:
+            db.add(ProcessBOM(
+                process_id=process_objs[code].id,
+                material_id=material_objs[mat_name].id,
+                quantity_per_session=qty
+            ))
     db.commit()
