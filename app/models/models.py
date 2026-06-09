@@ -184,3 +184,50 @@ class ExperienceRecord(Base):
     user = relationship("User", back_populates="experience_records")
     course = relationship("Course")
     booking = relationship("Booking")
+
+
+class Material(Base):
+    __tablename__ = "materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    unit = Column(String, nullable=False)
+    current_stock = Column(Float, nullable=False, default=0.0)
+    safety_stock = Column(Float, nullable=False, default=0.0)
+    description = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    process_boms = relationship("ProcessBOM", back_populates="material")
+    batches = relationship("MaterialBatch", back_populates="material")
+
+
+class ProcessBOM(Base):
+    __tablename__ = "process_boms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    process = relationship("Process")
+    material = relationship("Material", back_populates="process_boms")
+
+
+class MaterialBatch(Base):
+    __tablename__ = "material_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_number = Column(String, index=True, nullable=False)
+    booking_id = Column(Integer, ForeignKey("bookings.id"))
+    process_id = Column(Integer, ForeignKey("processes.id"))
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    operation_type = Column(String, nullable=False)
+    remark = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    material = relationship("Material", back_populates="batches")
+    booking = relationship("Booking")
+    process = relationship("Process")

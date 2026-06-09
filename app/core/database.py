@@ -45,4 +45,16 @@ def migrate_database():
         from app.models.models import ExperienceRecord
         ExperienceRecord.__table__.create(bind=engine)
     
+    if not inspector.has_table("materials"):
+        from app.models.models import Material
+        Material.__table__.create(bind=engine)
+    
+    if not inspector.has_table("process_boms"):
+        from app.models.models import ProcessBOM
+        ProcessBOM.__table__.create(bind=engine)
+    
+    if not inspector.has_table("material_batches"):
+        from app.models.models import MaterialBatch
+        MaterialBatch.__table__.create(bind=engine)
+    
     Base.metadata.create_all(bind=engine)

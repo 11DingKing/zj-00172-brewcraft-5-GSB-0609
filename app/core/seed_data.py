@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty
+from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty, Material, ProcessBOM
 from app.core.security import get_password_hash
 
 
@@ -398,3 +398,80 @@ def seed_database(db: Session):
             db.add(db_certificate)
     
     db.commit()
+    
+    if db.query(Material).count() == 0:
+        materials = [
+            Material(
+                name="大麦芽",
+                unit="kg",
+                current_stock=100.0,
+                safety_stock=20.0,
+                description="基础麦芽，提供主要的糖分和酒体"
+            ),
+            Material(
+                name="啤酒花",
+                unit="g",
+                current_stock=5000.0,
+                safety_stock=1000.0,
+                description="提供苦味和香气"
+            ),
+            Material(
+                name="酵母",
+                unit="g",
+                current_stock=2000.0,
+                safety_stock=500.0,
+                description="发酵用活性干酵母"
+            ),
+            Material(
+                name="糯米",
+                unit="kg",
+                current_stock=80.0,
+                safety_stock=15.0,
+                description="优质糯米，酿醋主要原料"
+            ),
+            Material(
+                name="麸皮",
+                unit="kg",
+                current_stock=60.0,
+                safety_stock=10.0,
+                description="制曲原料"
+            ),
+            Material(
+                name="大曲",
+                unit="kg",
+                current_stock=40.0,
+                safety_stock=8.0,
+                description="发酵用曲种"
+            )
+        ]
+        
+        for m in materials:
+            db.add(m)
+        db.commit()
+        
+        process_list = db.query(Process).all()
+        material_map = {m.name: m for m in materials}
+        
+        boms = [
+            {"process_code": "P001", "material_name": "糯米", "quantity": 5.0},
+            {"process_code": "P002", "material_name": "麸皮", "quantity": 2.0},
+            {"process_code": "P002", "material_name": "大曲", "quantity": 0.5},
+            {"process_code": "P003", "material_name": "大曲", "quantity": 1.0},
+            {"process_code": "P005", "material_name": "大麦芽", "quantity": 0.3},
+            {"process_code": "P001", "material_name": "大麦芽", "quantity": 2.0},
+            {"process_code": "P003", "material_name": "啤酒花", "quantity": 50.0},
+            {"process_code": "P003", "material_name": "酵母", "quantity": 20.0},
+        ]
+        
+        for bom_data in boms:
+            process = db.query(Process).filter(Process.code == bom_data["process_code"]).first()
+            material = material_map.get(bom_data["material_name"])
+            if process and material:
+                db_bom = ProcessBOM(
+                    process_id=process.id,
+                    material_id=material.id,
+                    quantity=bom_data["quantity"]
+                )
+                db.add(db_bom)
+        
+        db.commit()
