@@ -1,8 +1,8 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_
 from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
-from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, CourseType, ScheduleType, UserRole, MemberLevel, CourseDifficulty, ExperienceRecord
+from app.models.models import User, Process, Master, Course, Schedule, Booking, Certificate, course_process_association, CourseType, ScheduleType, UserRole, MemberLevel, CourseDifficulty, ExperienceRecord, Material, ProcessBOM, InventoryBatch, BatchType
 from app.schemas.schemas import UserCreate, ProcessCreate, MasterCreate, CourseCreate, ScheduleCreate, BookingCreate, CertificateCreate, BookingReview
 from app.core.security import get_password_hash, verify_password
 
@@ -173,6 +173,10 @@ def create_booking(db: Session, booking: BookingCreate):
         if course.max_participants and booking.participant_count > course.max_participants:
             raise ValueError(f"Maximum {course.max_participants} participants allowed")
     
+    inventory_msg = check_inventory_for_booking(db, booking.course_id, booking.participant_count)
+    if inventory_msg:
+        raise ValueError(inventory_msg)
+    
     end_time = booking.start_time + timedelta(minutes=course.duration_minutes)
     
     if check_schedule_conflict(db, booking.workshop_code, booking.start_time, end_time):
@@ -198,6 +202,14 @@ def create_booking(db: Session, booking: BookingCreate):
     db.add(db_schedule)
     db.commit()
     
+    try:
+        deduct_inventory_for_booking(db, db_booking.id, booking.course_id, booking.participant_count)
+    except ValueError:
+        db.delete(db_schedule)
+        db.delete(db_booking)
+        db.commit()
+        raise
+    
     if booking.user_id:
         add_experience_for_booking(db, db_booking.id)
     
@@ -221,6 +233,19 @@ def add_booking_review(db: Session, booking_id: int, review: BookingReview):
             master.total_reviews += 1
             master.rating = round(total_rating / master.total_reviews, 2)
     
+    db.commit()
+    db.refresh(db_booking)
+    return db_booking
+
+
+def cancel_booking(db: Session, booking_id: int):
+    db_booking = get_booking(db, booking_id)
+    if not db_booking:
+        raise ValueError("Booking not found")
+    if db_booking.status == "cancelled":
+        raise ValueError("Booking already cancelled")
+    rollback_inventory_for_booking(db, booking_id)
+    db_booking.status = "cancelled"
     db.commit()
     db.refresh(db_booking)
     return db_booking
@@ -496,3 +521,199 @@ def check_booking_permission(db: Session, user_id: int, course_id: int) -> bool:
     required_level_value = list(LEVEL_THRESHOLDS.keys()).index(course.required_level)
     
     return user_level_value >= required_level_value
+
+
+def get_material(db: Session, material_id: int):
+    return db.query(Material).filter(Material.id == material_id).first()
+
+
+def get_material_by_name(db: Session, name: str):
+    return db.query(Material).filter(Material.name == name).first()
+
+
+def get_materials(db: Session, skip: int = 0, limit: int = 100) -> Tuple[List[Material], int]:
+    query = db.query(Material)
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_material(db: Session, name: str, unit: str, current_stock: float = 0, safety_stock: float = 0):
+    db_material = Material(name=name, unit=unit, current_stock=current_stock, safety_stock=safety_stock)
+    db.add(db_material)
+    db.commit()
+    db.refresh(db_material)
+    return db_material
+
+
+def update_material(db: Session, material_id: int, current_stock: Optional[float] = None, safety_stock: Optional[float] = None):
+    db_material = get_material(db, material_id)
+    if not db_material:
+        raise ValueError("Material not found")
+    if current_stock is not None:
+        db_material.current_stock = current_stock
+    if safety_stock is not None:
+        db_material.safety_stock = safety_stock
+    db.commit()
+    db.refresh(db_material)
+    return db_material
+
+
+def get_material_alerts(db: Session) -> List[dict]:
+    results = db.query(Material).filter(Material.current_stock < Material.safety_stock).all()
+    return [
+        {
+            "id": m.id,
+            "name": m.name,
+            "unit": m.unit,
+            "current_stock": m.current_stock,
+            "safety_stock": m.safety_stock,
+            "shortage": round(m.safety_stock - m.current_stock, 2)
+        }
+        for m in results
+    ]
+
+
+def get_process_bom(db: Session, bom_id: int):
+    return db.query(ProcessBOM).filter(ProcessBOM.id == bom_id).first()
+
+
+def get_process_bom_by_process(db: Session, process_id: int) -> List[ProcessBOM]:
+    return db.query(ProcessBOM).options(
+        joinedload(ProcessBOM.material), joinedload(ProcessBOM.process)
+    ).filter(ProcessBOM.process_id == process_id).all()
+
+
+def get_process_boms(db: Session, skip: int = 0, limit: int = 100) -> Tuple[List[ProcessBOM], int]:
+    query = db.query(ProcessBOM).options(
+        joinedload(ProcessBOM.material), joinedload(ProcessBOM.process)
+    )
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_process_bom(db: Session, process_id: int, material_id: int, quantity_per_session: float):
+    material = get_material(db, material_id)
+    if not material:
+        raise ValueError("Material not found")
+    process = get_process(db, process_id)
+    if not process:
+        raise ValueError("Process not found")
+    existing = db.query(ProcessBOM).filter(
+        ProcessBOM.process_id == process_id,
+        ProcessBOM.material_id == material_id
+    ).first()
+    if existing:
+        raise ValueError("BOM entry already exists for this process-material pair")
+    db_bom = ProcessBOM(process_id=process_id, material_id=material_id, quantity_per_session=quantity_per_session)
+    db.add(db_bom)
+    db.commit()
+    db.refresh(db_bom)
+    return db.query(ProcessBOM).options(
+        joinedload(ProcessBOM.material), joinedload(ProcessBOM.process)
+    ).filter(ProcessBOM.id == db_bom.id).first()
+
+
+def delete_process_bom(db: Session, bom_id: int):
+    db_bom = db.query(ProcessBOM).options(
+        joinedload(ProcessBOM.material), joinedload(ProcessBOM.process)
+    ).filter(ProcessBOM.id == bom_id).first()
+    if not db_bom:
+        raise ValueError("BOM entry not found")
+    db.delete(db_bom)
+    db.commit()
+    return db_bom
+
+
+def generate_batch_no(booking_id: int, process_id: int, material_id: int) -> str:
+    ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    return f"BATCH-{ts}-{booking_id}-{process_id}-{material_id}"
+
+
+def check_inventory_for_booking(db: Session, course_id: int, participant_count: int) -> Optional[str]:
+    course = get_course(db, course_id)
+    if not course:
+        return None
+    shortages = []
+    for process in course.processes:
+        bom_entries = get_process_bom_by_process(db, process.id)
+        for bom in bom_entries:
+            total_needed = bom.quantity_per_session * participant_count
+            material = get_material(db, bom.material_id)
+            if material and material.current_stock < total_needed:
+                shortage = total_needed - material.current_stock
+                shortages.append(f"{material.name}差{shortage:.1f}{material.unit}")
+    if shortages:
+        return "库存不足：" + "；".join(shortages)
+    return None
+
+
+def deduct_inventory_for_booking(db: Session, booking_id: int, course_id: int, participant_count: int):
+    course = get_course(db, course_id)
+    if not course:
+        raise ValueError("Course not found")
+    for process in course.processes:
+        bom_entries = get_process_bom_by_process(db, process.id)
+        for bom in bom_entries:
+            total_needed = bom.quantity_per_session * participant_count
+            material = db.query(Material).with_for_update().filter(Material.id == bom.material_id).first()
+            if not material:
+                raise ValueError(f"Material id={bom.material_id} not found")
+            if material.current_stock < total_needed:
+                raise ValueError(f"库存不足：{material.name}差{total_needed - material.current_stock:.1f}{material.unit}")
+            material.current_stock -= total_needed
+            batch_no = generate_batch_no(booking_id, process.id, bom.material_id)
+            batch_record = InventoryBatch(
+                batch_no=batch_no,
+                booking_id=booking_id,
+                process_id=process.id,
+                material_id=bom.material_id,
+                quantity=total_needed,
+                batch_type=BatchType.DEDUCT
+            )
+            db.add(batch_record)
+    db.commit()
+
+
+def rollback_inventory_for_booking(db: Session, booking_id: int):
+    deduct_records = db.query(InventoryBatch).filter(
+        InventoryBatch.booking_id == booking_id,
+        InventoryBatch.batch_type == BatchType.DEDUCT
+    ).all()
+    for record in deduct_records:
+        material = db.query(Material).with_for_update().filter(Material.id == record.material_id).first()
+        if material:
+            material.current_stock += record.quantity
+        rollback_no = generate_batch_no(booking_id, record.process_id, record.material_id)
+        rollback_record = InventoryBatch(
+            batch_no=rollback_no,
+            booking_id=booking_id,
+            process_id=record.process_id,
+            material_id=record.material_id,
+            quantity=record.quantity,
+            batch_type=BatchType.ROLLBACK
+        )
+        db.add(rollback_record)
+    db.commit()
+
+
+def get_batch_by_batch_no(db: Session, batch_no: str) -> List[InventoryBatch]:
+    return db.query(InventoryBatch).options(
+        joinedload(InventoryBatch.material), joinedload(InventoryBatch.process)
+    ).filter(InventoryBatch.batch_no == batch_no).all()
+
+
+def get_batches_by_booking(db: Session, booking_id: int) -> List[InventoryBatch]:
+    return db.query(InventoryBatch).options(
+        joinedload(InventoryBatch.material), joinedload(InventoryBatch.process)
+    ).filter(InventoryBatch.booking_id == booking_id).all()
+
+
+def get_all_batches(db: Session, skip: int = 0, limit: int = 100) -> Tuple[List[InventoryBatch], int]:
+    query = db.query(InventoryBatch).options(
+        joinedload(InventoryBatch.material), joinedload(InventoryBatch.process)
+    ).order_by(InventoryBatch.created_at.desc())
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+    return items, total
