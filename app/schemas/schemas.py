@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Generic, TypeVar
 from datetime import datetime
-from app.models.models import UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty
+from app.models.models import UserRole, CourseType, ScheduleType, MemberLevel, CourseDifficulty, StockTransactionType
 
 T = TypeVar('T')
 
@@ -268,3 +268,99 @@ class MonthlyRevenue(BaseModel):
     month: int
     total_revenue: float
     booking_count: int
+
+
+class MaterialBase(BaseModel):
+    name: str
+    code: str
+    unit: str
+    safety_threshold: float = 0.0
+    description: Optional[str] = None
+
+
+class MaterialCreate(MaterialBase):
+    stock_quantity: float = 0.0
+
+
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    unit: Optional[str] = None
+    safety_threshold: Optional[float] = None
+    description: Optional[str] = None
+    stock_quantity: Optional[float] = None
+
+
+class Material(MaterialBase):
+    id: int
+    stock_quantity: float
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessBOMBase(BaseModel):
+    process_id: int
+    material_id: int
+    quantity_per_batch: float
+
+
+class ProcessBOMCreate(ProcessBOMBase):
+    pass
+
+
+class ProcessBOM(ProcessBOMBase):
+    id: int
+    created_at: datetime
+    material: Material
+
+    class Config:
+        from_attributes = True
+
+
+class StockTransactionBase(BaseModel):
+    batch_number: str
+    booking_id: Optional[int] = None
+    process_id: Optional[int] = None
+    material_id: int
+    quantity: float
+    transaction_type: StockTransactionType
+    remark: Optional[str] = None
+
+
+class StockTransaction(StockTransactionBase):
+    id: int
+    created_at: datetime
+    material: Material
+    related_transaction_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class StockShortageInfo(BaseModel):
+    material_id: int
+    material_name: str
+    material_code: str
+    unit: str
+    current_stock: float
+    safety_threshold: float
+    shortage: float
+
+
+class BatchDetail(BaseModel):
+    batch_number: str
+    booking_id: Optional[int]
+    customer_name: Optional[str]
+    course_name: Optional[str]
+    process_name: Optional[str]
+    material_name: str
+    material_code: str
+    unit: str
+    quantity: float
+    transaction_type: StockTransactionType
+    created_at: datetime
+
+
+class BookingCancel(BaseModel):
+    reason: Optional[str] = None

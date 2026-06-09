@@ -184,3 +184,58 @@ class ExperienceRecord(Base):
     user = relationship("User", back_populates="experience_records")
     course = relationship("Course")
     booking = relationship("Booking")
+
+
+class Material(Base):
+    __tablename__ = "materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    code = Column(String, unique=True, nullable=False)
+    unit = Column(String, nullable=False)
+    stock_quantity = Column(Float, nullable=False, default=0.0)
+    safety_threshold = Column(Float, nullable=False, default=0.0)
+    description = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bom_items = relationship("ProcessBOM", back_populates="material")
+    stock_transactions = relationship("StockTransaction", back_populates="material")
+
+
+class ProcessBOM(Base):
+    __tablename__ = "process_boms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_id = Column(Integer, ForeignKey("processes.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity_per_batch = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    process = relationship("Process")
+    material = relationship("Material", back_populates="bom_items")
+
+
+class StockTransactionType(str, enum.Enum):
+    DEDUCT = "deduct"
+    ROLLBACK = "rollback"
+    RESTOCK = "restock"
+
+
+class StockTransaction(Base):
+    __tablename__ = "stock_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_number = Column(String, index=True, nullable=False)
+    booking_id = Column(Integer, ForeignKey("bookings.id"))
+    process_id = Column(Integer, ForeignKey("processes.id"))
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    transaction_type = Column(Enum(StockTransactionType), nullable=False)
+    related_transaction_id = Column(Integer, ForeignKey("stock_transactions.id"))
+    remark = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    booking = relationship("Booking")
+    process = relationship("Process")
+    material = relationship("Material", back_populates="stock_transactions")
+    related_transaction = relationship("StockTransaction", remote_side=[id])
